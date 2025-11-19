@@ -1,0 +1,60 @@
+apiVersion: ec2.services.k8s.aws/v1alpha1
+kind: VPC
+metadata:
+  name: tutorial-vpc-{{ .Release.Name }}
+  annotations:
+    output_vpcid: "vpc_id|$.status.vpcID"
+  labels:
+    release: {{ .Release.Name }}
+spec:
+  cidrBlocks:
+  - 10.0.0.0/16
+  enableDNSSupport: true
+  enableDNSHostnames: true
+  tags:
+    - key: name
+      value: vpc-tutorial-{{ .Release.Name }}
+---
+
+apiVersion: ec2.services.k8s.aws/v1alpha1
+kind: Subnet
+metadata:
+  name: tutorial-public-subnet1-{{ .Release.Name }}
+  annotations:
+    output_subnetid: "subnet_id|$.status.subnetID"
+  labels:
+    release: {{ .Release.Name }}
+spec:
+  availabilityZone: us-west-2a
+  cidrBlock: 10.0.0.0/20
+  mapPublicIPOnLaunch: true
+  vpcRef:
+    from:
+      name: tutorial-vpc-{{ .Release.Name }}
+---
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: monitor-resource-job-{{ .Release.Name }}
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-delete-policy": hook-succeeded,hook-failed
+spec:
+  template:
+    spec:
+      serviceAccountName: monitor-resource-sa
+      restartPolicy: Never
+      containers:
+        - name: monitor-resource
+          image: 810918108393.dkr.ecr.eu-south-1.amazonaws.com/monitor-resource:latest
+          imagePullPolicy: Always
+          command: ["java", "-jar", "/app/app.jar"]
+          args:
+            - "--custom-arg1=value1"
+            - "--custom-arg2=value2"
+          env:
+            - name: MAX_TIMEOUT
+              value: "300"
+            - name: RELEASE_NAME
+              value: {{ .Release.Name }}
