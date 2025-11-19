@@ -1,0 +1,39 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: ack-git
+  namespace: default
+spec:
+  interval: 15m
+  url: https://github.com/Ashish7812/helmcharts
+  ref:
+    branch: main   # Change from master to main
+
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: ack-release
+  namespace: default
+spec:
+  interval: 15m
+  timeout: 5m
+  chart:
+    spec:
+      chart: ack
+      version: '6.5.*'
+      sourceRef:
+        kind: GitRepository
+        name: ack-git
+      interval: 5m
+  releaseName: ack-release
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  test:
+    enable: true

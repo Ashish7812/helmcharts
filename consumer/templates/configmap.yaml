@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-consumer-config
+data:
+  vpc_id: {{ .Values.vpc_id | quote }}
+  subnet_id: {{ .Values.subnet_id | quote }}
