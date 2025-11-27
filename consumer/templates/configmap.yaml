@@ -6,17 +6,3 @@ metadata:
 data:
   vpc_id: {{ .Values.vpc_id | quote }}
   subnet_id: {{ .Values.subnet_id | quote }}
-
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: {{ .Release.Name }}-nginx-pod
-  labels:
-    app: nginx
-spec:
-  containers:
-    - name: {{ .Release.Name }}-nginx
-      image: nginx:latest
-      ports:
-        - containerPort: 80
