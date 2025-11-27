@@ -4,6 +4,7 @@ metadata:
   name: tutorial-vpc-{{ .Release.Name }}
   annotations:
     output_vpcid: "vpc_id|$.status.vpcID"
+    output_dhcpid: "dhcp_id|$.status.dhcpOptionsID"
   labels:
     release: {{ .Release.Name }}
 spec:
