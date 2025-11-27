@@ -10,3 +10,28 @@ spec:
       image: nginx:latest
       ports:
         - containerPort: 80
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: monitor-resource-job-{{ .Release.Name }}
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-delete-policy": hook-succeeded,hook-failed
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: monitor-resource
+          image: nginx:latest
+          imagePullPolicy: Always
+          command: ["/bin/sh", "-c"]
+          args:
+            - "echo 'Starting monitoring logic...'; sleep 600; echo 'Completed wait of 10 minutes.'"
+          env:
+            - name: MAX_TIMEOUT
+              value: "300"
+            - name: RELEASE_NAME
+              value: {{ .Release.Name }}
