@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}-nginx-pod
+  labels:
+    app: nginx
+spec:
+  containers:
+    - name: {{ .Release.Name }}-nginx
+      image: nginx:latest
+      ports:
+        - containerPort: 80
