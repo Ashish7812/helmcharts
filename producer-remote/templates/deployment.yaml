@@ -42,6 +42,8 @@ metadata:
   name: {{ .Release.Name }}-nginx-service
   annotations:
     output_url: "url|$.status.loadBalancer.ingress[0].hostname"
+  labels:
+    release: {{ .Release.Name }}
 spec:
   selector:
     app: nginx
