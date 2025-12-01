@@ -1,0 +1,33 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sync-configmap-sa
+  namespace: default
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: configmap-sync-role
+  namespace: default
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: configmap-sync-rolebinding
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: sync-configmap-sa
+    namespace: default
+roleRef:
+  kind: Role
+  name: configmap-sync-role
+  apiGroup: rbac.authorization.k8s.io
+  
+

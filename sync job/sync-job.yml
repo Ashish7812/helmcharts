@@ -1,0 +1,52 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sync-configmap
+  namespace: default
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      serviceAccountName: sync-configmap-sa
+      restartPolicy: Never
+      containers:
+        - name: sync
+          image: bitnami/kubectl:latest
+          env:
+            - name: REMOTE_NS
+              value: "default"        # Remote cluster namespace
+            - name: LOCAL_NS
+              value: "default"        # Local cluster namespace
+            - name: CONFIGMAP_NAME
+              value: "client-configmap"   # ConfigMap name to sync
+            - name: REMOTE_KUBECONFIG
+              value: "/remote/value"  # Matches your Secret key
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+
+              echo "Fetching ConfigMap '$CONFIGMAP_NAME' from remote cluster namespace '$REMOTE_NS'..."
+              if ! kubectl --kubeconfig=$REMOTE_KUBECONFIG get configmap $CONFIGMAP_NAME -n $REMOTE_NS -o yaml > /tmp/cm.yaml; then
+                echo "Error: ConfigMap '$CONFIGMAP_NAME' not found in remote cluster namespace '$REMOTE_NS'"
+                exit 1
+              fi
+
+              echo "Updating namespace for local cluster..."
+              sed -i "s/namespace: .*/namespace: $LOCAL_NS/" /tmp/cm.yaml
+
+              echo "Applying ConfigMap to local cluster namespace '$LOCAL_NS'..."
+              if ! kubectl apply -f /tmp/cm.yaml; then
+                echo "Error: Failed to apply ConfigMap to local cluster"
+                exit 1
+              fi
+
+              echo "Sync completed successfully!"
+          volumeMounts:
+            - name: remote-kubeconfig
+              mountPath: /remote
+      volumes:
+        - name: remote-kubeconfig
+          secret:
+            secretName: k8-simulation-client-cluster-kubeconfig
