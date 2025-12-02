@@ -1,0 +1,78 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: ack-git-remote
+  namespace: default
+spec:
+  interval: 15m
+  url: https://github.com/Ashish7812/helmcharts
+  ref:
+    branch: main   # Change from master to main
+
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: ack-release-remote
+  namespace: default
+spec:
+  interval: 15m
+  timeout: 5m
+  chart:
+    spec:
+      chart: ack
+      version: '6.5.*'
+      sourceRef:
+        kind: GitRepository
+        name: ack-git-remote
+      interval: 5m
+  releaseName: ack-release-remote
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  test:
+    enable: true
+  kubeConfig:
+    secretRef:
+      name: k8-simulation-client-cluster-kubeconfig
+    
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: consumer-release-remote
+  namespace: default
+spec:
+  dependsOn:
+    - name: ack-release-remote
+  valuesFrom:
+    - kind: ConfigMap
+      name: prod-env-values-ack-release-remote
+      valuesKey: values.yaml
+  interval: 15m
+  timeout: 5m
+  chart:
+    spec:
+      chart: consumer
+      version: '6.5.*'
+      sourceRef:
+        kind: GitRepository
+        name: ack-git-remote
+      interval: 5m
+  releaseName: consumer-release-remote
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  test:
+    enable: true
+  kubeConfig:
+    secretRef:
+      name: k8-simulation-client-cluster-kubeconfig

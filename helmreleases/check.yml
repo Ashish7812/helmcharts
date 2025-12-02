@@ -1,0 +1,29 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: ack-release2
+  namespace: default
+spec:
+  valuesFrom:
+    - kind: ConfigMap
+      name: prod-env-values-ack-release-2
+      valuesKey: values.yaml
+  interval: 15m
+  timeout: 5m
+  chart:
+    spec:
+      chart: ack
+      version: '6.5.*'
+      sourceRef:
+        kind: GitRepository
+        name: ack-git
+      interval: 5m
+  releaseName: ack-release2
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  test:
+    enable: true

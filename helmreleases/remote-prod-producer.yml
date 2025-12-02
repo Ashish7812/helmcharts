@@ -1,0 +1,119 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: producer-release-remote
+  namespace: default
+spec:
+  values:
+    invocationMode: INSTALL
+    app:
+      version: 1.2.3
+  interval: 15m
+  timeout: 5m
+  chart:
+    spec:
+      chart: producer-remote
+      version: '6.5.*'
+      sourceRef:
+        kind: GitRepository
+        name: ack-git
+      interval: 5m
+  releaseName: producer-release-remote
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  test:
+    enable: true
+  kubeConfig:
+    secretRef:
+      name: k8-simulation-client-cluster-kubeconfig
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: sync-configmap
+  namespace: default
+spec:
+  dependsOn:
+   - name: producer-release-remote
+  interval: 15m
+  timeout: 5m
+  values:
+    configmap: prod-env-values-producer-release-remote
+  chart:
+    spec:
+      chart: sync-chart
+      version: '6.5.*'
+      sourceRef:
+        kind: GitRepository
+        name: ack-git
+      interval: 5m
+  releaseName: sync-configmap
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  test:
+    enable: true
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: consumer-release
+  namespace: default
+spec:
+  commonMetadata:
+    labels:
+      environment: production
+      monitor: mon-uuid
+  values:
+    invocationMode: INSTALL
+    app:
+      version: 1.2.3
+  valuesFrom:
+    - kind: ConfigMap
+      name: prod-env-values-producer-release-remote
+      valuesKey: values.yaml
+  dependsOn:
+  - name: sync-configmap
+  - name: producer-release-remote
+    readyExpr: >
+      self.spec.values.invocationMode == 'INSTALL'
+        ? dep.status.conditions.filter(e, e.type == 'Ready').all(e, e.status == 'True') &&
+          dep.metadata.generation == dep.status.observedGeneration
+        : (
+            dep.spec.values.app.version.matches('^1\\.(4[0-9]*|[5-9][0-9]*)(\\..*)?$')
+              ? true
+              : dep.status.conditions.filter(e, e.type == 'Ready').all(e, e.status == 'True') &&
+                dep.metadata.generation == dep.status.observedGeneration
+          )
+  interval: 15m
+  timeout: 15m
+  chart:
+    spec:
+      chart: consumer
+      version: '6.5.*'
+      sourceRef:
+        kind: GitRepository
+        name: ack-git
+      interval: 5m
+  releaseName: consumer-release
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  test:
+    enable: true
+  kubeConfig:
+    secretRef:
+      name: k8-simulation-client-cluster-kubeconfig
