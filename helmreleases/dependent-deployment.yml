@@ -1,0 +1,80 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: producer-release-v2
+  namespace: default
+spec:
+  commonMetadata:
+    labels:
+      environment: production
+      monitor: mon-uuid
+
+  values:
+    app:
+      version: 2.42.3
+  interval: 15m
+  timeout: 15m
+  chart:
+    spec:
+      chart: producer
+      version: '6.5.*'
+      sourceRef:
+        kind: GitRepository
+        name: ack-git
+      interval: 5m
+  releaseName: producer-release-v2
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  test:
+    enable: true
+
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: consumer-release-v2
+  namespace: default
+spec:
+  commonMetadata:
+    labels:
+      environment: production
+      monitor: mon-uuid
+  values:
+    invocationMode: UPGRADE
+    app:
+      version: 1.2.3
+  dependsOn:
+  - name: producer-release-v2
+    readyExpr: >
+      self.spec.values.invocationMode == 'INSTALL'
+        ? dep.status.conditions.filter(e, e.type == 'Ready').all(e, e.status == 'True') &&
+          dep.metadata.generation == dep.status.observedGeneration
+        : (
+            dep.spec.values.app.version.matches('^1\\.(4[0-9]*|[5-9][0-9]*)(\\..*)?$')
+              ? true
+              : dep.status.conditions.filter(e, e.type == 'Ready').all(e, e.status == 'True') &&
+                dep.metadata.generation == dep.status.observedGeneration
+          )
+  interval: 15m
+  timeout: 15m
+  chart:
+    spec:
+      chart: consumer
+      version: '6.5.*'
+      sourceRef:
+        kind: GitRepository
+        name: ack-git
+      interval: 5m
+  releaseName: consumer-release-v2
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  test:
+    enable: true

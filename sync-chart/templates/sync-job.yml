@@ -53,3 +53,35 @@ spec:
         - name: remote-kubeconfig
           secret:
             secretName: k8-simulation-client-cluster-kubeconfig
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cleanup-synced-secret-{{ .Release.Name }}
+  namespace: default
+  annotations:
+    "helm.sh/hook": post-delete
+    "helm.sh/hook-delete-policy": hook-succeeded,hook-failed
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: cleanup
+          image: bitnami/kubectl:latest
+          env:
+            - name: REMOTE_NS
+              value: "default"        # Remote cluster namespace
+            - name: LOCAL_NS
+              value: "default"        # Local cluster namespace
+            - name: CONFIGMAP_NAME
+              value: {{ .Values.configmap | quote }}   # ConfigMap name to sync
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Deleting synced Secret from local cluster..."
+              kubectl delete cm $CONFIGMAP_NAME || echo "Secret not found, skipping."
+
