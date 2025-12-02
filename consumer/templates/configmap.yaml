@@ -6,3 +6,4 @@ metadata:
 data:
   vpc_id: {{ .Values.vpc_id | quote }}
   subnet_id: {{ .Values.subnet_id | quote }}
+  url: {{ .Values.url | quote }}
