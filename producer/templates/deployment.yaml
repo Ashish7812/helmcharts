@@ -29,7 +29,7 @@ spec:
           imagePullPolicy: Always
           command: ["/bin/sh", "-c"]
           args:
-            - "echo 'Starting monitoring logic...'; sleep 120; echo 'Completed wait of 2 minutes.'"
+            - "echo 'Starting monitoring logic...'; sleep 60; echo 'Completed wait of 1 minute.'"
           env:
             - name: MAX_TIMEOUT
               value: "300"
