@@ -7,7 +7,7 @@ metadata:
 spec:
   containers:
     - name: {{ .Release.Name }}-nginx
-      image: nginx:latest
+      image: {{ .Values.image | quote }}
       ports:
         - containerPort: 80
 
