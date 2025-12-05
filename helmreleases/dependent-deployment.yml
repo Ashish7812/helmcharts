@@ -10,7 +10,7 @@ spec:
       monitor: mon-uuid
 
   values:
-    image: nginx:latest
+    image: nginx:stable-perl
     app:
       version: 1.42.3
   interval: 15m
@@ -45,8 +45,8 @@ spec:
       environment: production
       monitor: mon-uuid
   values:
-    invocationMode: INSTALL
-    image: nginx:latest
+    invocationMode: UPGRADE
+    image: nginx:stable-perl
     app:
       version: 1.2.3
   dependsOn:
