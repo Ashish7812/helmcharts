@@ -10,8 +10,9 @@ spec:
       monitor: mon-uuid
 
   values:
+    image: nginx:latest
     app:
-      version: 2.42.3
+      version: 1.42.3
   interval: 15m
   timeout: 15m
   chart:
@@ -44,7 +45,8 @@ spec:
       environment: production
       monitor: mon-uuid
   values:
-    invocationMode: UPGRADE
+    invocationMode: INSTALL
+    image: nginx:latest
     app:
       version: 1.2.3
   dependsOn:
