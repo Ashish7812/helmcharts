@@ -75,6 +75,7 @@ spec:
       environment: production
       monitor: mon-uuid
   values:
+    image: nginx:latest
     invocationMode: INSTALL
     app:
       version: 1.2.3
