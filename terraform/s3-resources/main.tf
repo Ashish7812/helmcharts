@@ -34,7 +34,7 @@ resource "aws_s3_bucket" "example" {
   tags = {
     Environment = var.environment
     ManagedBy   = "TofuController"
-    Owner       = "ashishkumar.sahoo@in.pega.com"
+    Owner       = "sahoa"
   }
 }
 
