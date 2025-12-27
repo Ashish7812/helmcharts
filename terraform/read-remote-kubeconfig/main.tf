@@ -10,6 +10,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.29"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
   }
 }
 
@@ -17,121 +21,185 @@ terraform {
 # Providers
 ############################################
 
-# AWS provider: used only to read the EKS cluster endpoint and CA.
 provider "aws" {
   region = var.region
 }
 
-# Kubernetes provider: points to the management/Flux cluster
-# (the cluster where Flux's Helm Controller runs and where this Secret must live).
-# If you run Terraform *in-cluster*, you can omit config_path and rely on in-cluster auth.
+# Remote (target) cluster provider uses the exec-auth kubeconfig we generate
 provider "kubernetes" {
-  # Option A — local kubeconfig file:
-  # config_path = "~/.kube/config"
+  alias       = "remote"
+  config_path = var.exec_kubeconfig_relpath
+}
 
-  # Option B — explicit host & credentials (example):
-  # host                   = var.mgmt_cluster_host
-  # cluster_ca_certificate = base64decode(var.mgmt_cluster_ca)
-  # token                  = var.mgmt_cluster_token
+# Management cluster provider:
+# In tf-controller, leaving config unset lets it use in-cluster ServiceAccount automatically. [8](https://devopscube.com/kubernetes-api-access-service-account/)
+provider "kubernetes" {
+  alias = "mgmt"
 }
 
 ############################################
-# Inputs
+# 1) Generate EKS exec-auth kubeconfig (in-runner)  [1](https://opentofu.org/docs/language/settings/backends/configuration/)
 ############################################
 
-variable "region" {
-  description = "AWS region where the target EKS cluster is deployed"
-  type        = string
-}
+resource "null_resource" "generate_kubeconfig" {
+  triggers = {
+    region          = var.region
+    eks_cluster     = var.eks_cluster_name
+    kubeconfig_path = var.exec_kubeconfig_relpath
+    aws_profile     = coalesce(var.aws_profile, "")
+  }
 
-variable "eks_cluster_name" {
-  description = "Name of the target EKS cluster whose kubeconfig will be published as a Secret"
-  type        = string
+  provisioner "local-exec" {
+    interpreter = ["/bin/sh", "-c"]
+    command     = <<-CMD
+      set -euo pipefail
+      ${var.aws_profile != null ? "export AWS_PROFILE='${var.aws_profile}';" : ""}
+      aws eks update-kubeconfig \
+        --region '${var.region}' \
+        --name '${var.eks_cluster_name}' \
+        --kubeconfig '${var.exec_kubeconfig_relpath}' \
+        --alias '${var.eks_cluster_name}'
+    CMD
+  }
 }
-
-variable "secret_name" {
-  description = "Name of the Kubernetes Secret to create (must be in same namespace as HelmRelease)"
-  type        = string
-  default     = "kubeconfig-target-eks"
-}
-
-variable "secret_namespace" {
-  description = "Namespace in the management cluster where the Secret will be created (e.g., flux-system)"
-  type        = string
-  default     = "flux-system"
-}
-
-# Uncomment if you prefer provider host/token wiring instead of config_path
-# variable "mgmt_cluster_host" { type = string }
-# variable "mgmt_cluster_ca"   { type = string } # base64 cluster CA
-# variable "mgmt_cluster_token" { type = string }
 
 ############################################
-# Read EKS cluster attributes
+# 2) Read EKS endpoint & CA (for final kubeconfig)  [9](https://github.com/mrphuongbn/tf-controller)
 ############################################
 
 data "aws_eks_cluster" "target" {
   name = var.eks_cluster_name
 }
 
-# Optional: if you need a token embedded (not usually needed when using exec):
-# data "aws_eks_cluster_auth" "target" {
-#   name = var.eks_cluster_name
-# }
+############################################
+# 3) Remote cluster: SA + RBAC
+############################################
+
+resource "kubernetes_service_account" "flux_remote_helm" {
+  provider = kubernetes.remote
+
+  metadata {
+    name      = "flux-remote-helm"
+    namespace = var.remote_target_namespace
+  }
+
+  depends_on = [null_resource.generate_kubeconfig]
+}
+
+resource "kubernetes_cluster_role" "flux_remote_helm_role" {
+  provider = kubernetes.remote
+
+  metadata { name = "flux-remote-helm-role" }
+
+  # Minimal verbs for Helm storage & typical chart objects; tailor to least privilege.
+  rule { api_groups = [""], resources = ["secrets", "configmaps"], verbs = ["get","list","watch","create","update","patch","delete"] }
+  rule { api_groups = [""], resources = ["services","serviceaccounts","persistentvolumeclaims","namespaces"], verbs = ["*"] }
+  rule { api_groups = ["apps"], resources = ["deployments","daemonsets","statefulsets","replicasets"], verbs = ["*"] }
+  rule { api_groups = ["batch"], resources = ["jobs","cronjobs"], verbs = ["*"] }
+  rule { api_groups = ["networking.k8s.io"], resources = ["ingresses","networkpolicies"], verbs = ["*"] }
+
+  depends_on = [null_resource.generate_kubeconfig]
+}
+
+resource "kubernetes_cluster_role_binding" "flux_remote_helm_binding" {
+  provider = kubernetes.remote
+
+  metadata { name = "flux-remote-helm-binding" }
+
+  role_ref { api_group = "rbac.authorization.k8s.io", kind = "ClusterRole", name = kubernetes_cluster_role.flux_remote_helm_role.metadata[0].name }
+  subject  { kind = "ServiceAccount", name = kubernetes_service_account.flux_remote_helm.metadata[0].name, namespace = var.remote_target_namespace }
+
+  depends_on = [kubernetes_cluster_role.flux_remote_helm_role]
+}
 
 ############################################
-# Render kubeconfig (exec auth via aws CLI)
+# 4) Remote cluster: SA token Secret (wait until token is populated)
+#    Kubernetes 1.24+ requires manual SA token; provider can wait for token. [2](https://www.harness.io/blog/gitops-your-terraform-or-opentofu)[3](https://developer.hashicorp.com/terraform/language/backend)
+############################################
+
+resource "kubernetes_secret" "flux_remote_sa_token" {
+  provider = kubernetes.remote
+
+  metadata {
+    name      = "flux-remote-helm-token"
+    namespace = var.remote_target_namespace
+    annotations = {
+      "kubernetes.io/service-account.name" = kubernetes_service_account.flux_remote_helm.metadata[0].name
+    }
+  }
+
+  type = "kubernetes.io/service-account-token"
+
+  wait_for_service_account_token = true
+
+  depends_on = [kubernetes_cluster_role_binding.flux_remote_helm_binding]
+}
+
+############################################
+# 5) Build static-token kubeconfig (no exec)
 ############################################
 
 locals {
-  kubeconfig = <<-YAML
+  remote_sa_token = base64decode(kubernetes_secret.flux_remote_sa_token.data["token"])
+  kubeconfig      = <<-YAML
     apiVersion: v1
     kind: Config
     clusters:
-      - name: ${var.eks_cluster_name}
-        cluster:
-          server: ${data.aws_eks_cluster.target.endpoint}
-          certificate-authority-data: ${data.aws_eks_cluster.target.certificate_authority[0].data}
-    contexts:
-      - name: ${var.eks_cluster_name}
-        context:
-          cluster: ${var.eks_cluster_name}
-          user: ${var.eks_cluster_name}
-    current-context: ${var.eks_cluster_name}
+    - name: remote
+      cluster:
+        server: ${data.aws_eks_cluster.target.endpoint}
+        certificate-authority-data: ${data.aws_eks_cluster.target.certificate_authority[0].data}
     users:
-      - name: ${var.eks_cluster_name}
-        user:
-          exec:
-            apiVersion: "client.authentication.k8s.io/v1beta1"
-            command: "aws"
-            args:
-              - "eks"
-              - "get-token"
-              - "--cluster-name"
-              - "${var.eks_cluster_name}"
-              - "--region"
-              - "${var.region}"
+    - name: flux-remote-helm
+      user:
+        token: ${local.remote_sa_token}
+    contexts:
+    - name: remote
+      context:
+        cluster: remote
+        user: flux-remote-helm
+    current-context: remote
   YAML
 }
 
 ############################################
-# Publish the Secret (key must be "value")
+# 6) Management cluster: publish kubeconfig Secret for Flux HelmRelease
+#    Secret must be in same namespace; data key defaults to "value". [4](https://flux-iac.github.io/tofu-controller/References/terraform/)
 ############################################
 
-resource "kubernetes_secret" "flux_remote_kubeconfig" {
+resource "kubernetes_secret" "published_kubeconfig" {
+  provider = kubernetes.mgmt
+
   metadata {
-    name      = var.secret_name
-    namespace = var.secret_namespace
+    name      = var.publish_secret_name
+    namespace = var.publish_secret_namespace
     labels = {
       "managed-by" = "terraform"
       "purpose"    = "flux-helmrelease-kubeconfig"
     }
   }
 
-  # HelmRelease.spec.kubeConfig.secretRef defaults to key "value". [1](https://registry.terraform.io/providers/fluxcd/flux/latest)
-  data = {
-    value = local.kubeconfig
-  }
+  data = { value = local.kubeconfig }
 
   type = "Opaque"
+}
+
+############################################
+# Outputs (sanity checks)
+############################################
+
+output "exec_kubeconfig_written" {
+  value       = var.exec_kubeconfig_relpath
+  description = "Path inside runner where exec-auth kubeconfig was written"
+}
+
+output "published_secret" {
+  value       = "${var.publish_secret_namespace}/${var.publish_secret_name}"
+  description = "Kubeconfig Secret published for Flux HelmRelease"
+}
+
+output "remote_sa_token_preview" {
+  value       = substr(local.remote_sa_token, 0, 20)
+  description = "First 20 chars of the generated SA token"
+  sensitive   = true
 }

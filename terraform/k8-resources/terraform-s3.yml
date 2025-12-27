@@ -1,0 +1,48 @@
+
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: s3-demo
+  namespace: default
+spec:
+  # Reconcile cadence: plan/apply and drift detection cadence
+  interval: 5m
+
+  # Automate plan approval + apply (good for non-prod; for prod consider manual)
+  approvePlan: auto
+
+  # Path within the GitRepository that contains your Terraform code
+  path: terraform/s3-resources
+
+  # Reference to the Flux Source
+  sourceRef:
+    kind: GitRepository
+    name: ack-git
+
+  # Runner configuration (multi-tenancy model)
+  serviceAccountName: tf-runner-sa
+
+  
+  # 👇 New: write all outputs to a Secret
+  writeOutputsToSecret:
+    name: s3-demo-outputs
+    # (optional) add labels/annotations if another controller consumes the secret
+    labels:
+      app.kubernetes.io/managed-by: tofu-controller
+    annotations:
+      example.com/expires-at: "never"
+
+
+  # Terraform variables (match your variables.tf)
+  vars:
+    - name: region
+      value: "us-east-1"
+    - name: bucket_name
+      value: "devdevil-demo-bucket"
+    - name: environment
+      value: "dev"
+
+  # (Optional) Inject env vars from Secret (AWS creds)
+  varsFrom:
+    - kind: Secret
+      name: aws-creds
