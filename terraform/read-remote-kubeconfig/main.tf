@@ -72,7 +72,7 @@ data "aws_eks_cluster" "target" {
 }
 
 ############################################
-# 3) Remote cluster: SA + RBAC
+# 3) Remote cluster: SA + RBAC (WIDE ACCESS)
 ############################################
 
 resource "kubernetes_service_account" "flux_remote_helm" {
@@ -86,17 +86,26 @@ resource "kubernetes_service_account" "flux_remote_helm" {
   depends_on = [null_resource.generate_kubeconfig]
 }
 
+# --- WIDE CLUSTER ROLE ---
 resource "kubernetes_cluster_role" "flux_remote_helm_role" {
   provider = kubernetes.remote
 
-  metadata { name = "flux-remote-helm-role" }
+  metadata {
+    name = "flux-remote-helm-role"
+  }
 
-  # Minimal verbs for Helm storage & typical chart objects; tailor to least privilege.
-  rule { api_groups = [""], resources = ["secrets", "configmaps"], verbs = ["get","list","watch","create","update","patch","delete"] }
-  rule { api_groups = [""], resources = ["services","serviceaccounts","persistentvolumeclaims","namespaces"], verbs = ["*"] }
-  rule { api_groups = ["apps"], resources = ["deployments","daemonsets","statefulsets","replicasets"], verbs = ["*"] }
-  rule { api_groups = ["batch"], resources = ["jobs","cronjobs"], verbs = ["*"] }
-  rule { api_groups = ["networking.k8s.io"], resources = ["ingresses","networkpolicies"], verbs = ["*"] }
+  # Full access to all API groups/resources (use cautiously)
+  rule {
+    api_groups = ["*"]
+    resources  = ["*"]
+    verbs      = ["*"]
+  }
+
+  # Access non-resource URLs on the API server (optional but often useful)
+  rule {
+    non_resource_urls = ["*"]
+    verbs             = ["*"]
+  }
 
   depends_on = [null_resource.generate_kubeconfig]
 }
@@ -104,13 +113,25 @@ resource "kubernetes_cluster_role" "flux_remote_helm_role" {
 resource "kubernetes_cluster_role_binding" "flux_remote_helm_binding" {
   provider = kubernetes.remote
 
-  metadata { name = "flux-remote-helm-binding" }
+  metadata {
+    name = "flux-remote-helm-binding"
+  }
 
-  role_ref { api_group = "rbac.authorization.k8s.io", kind = "ClusterRole", name = kubernetes_cluster_role.flux_remote_helm_role.metadata[0].name }
-  subject  { kind = "ServiceAccount", name = kubernetes_service_account.flux_remote_helm.metadata[0].name, namespace = var.remote_target_namespace }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = kubernetes_cluster_role.flux_remote_helm_role.metadata[0].name
+  }
+
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.flux_remote_helm.metadata[0].name
+    namespace = var.remote_target_namespace
+  }
 
   depends_on = [kubernetes_cluster_role.flux_remote_helm_role]
 }
+
 
 ############################################
 # 4) Remote cluster: SA token Secret (wait until token is populated)
