@@ -1,0 +1,44 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: consumer-release
+  namespace: default
+spec:
+  commonMetadata:
+    labels:
+      environment: production
+      monitor: mon-uuid
+  values:
+    invocationMode: INSTALL
+    app:
+      version: 1.2.3
+  dependsOn:
+  - name: producer-release-remote
+    readyExpr: >
+      dep != null
+        ? dep.status.conditions.filter(e, e.type == 'Ready').all(e, e.status == 'True')
+        : true
+
+  interval: 15m
+  timeout: 15m
+  chart:
+    spec:
+      chart: consumer
+      version: '6.5.*'
+      sourceRef:
+        kind: GitRepository
+        name: ack-git
+      interval: 5m
+  releaseName: consumer-release
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  test:
+    enable: true
+  kubeConfig:
+    secretRef:
+      name: k8-simulation-client-cluster-kubeconfig
