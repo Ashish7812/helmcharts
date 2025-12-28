@@ -1,20 +1,12 @@
 terraform {
   required_version = ">= 1.5"
   required_providers {
-    aws = { source = "hashicorp/aws", version = "~> 5.0" }
+    aws        = { source = "hashicorp/aws", version = "~> 5.0" }
     kubernetes = { source = "hashicorp/kubernetes", version = "~> 2.29" }
-    local = { source = "hashicorp/local", version = "~> 2.4" }
-    time = { source = "hashicorp/time", version = "~> 0.9" } # <-- ADD THIS LINE
+    local      = { source = "hashicorp/local", version = "~> 2.4" }
+    time       = { source = "hashicorp/time", version = "~> 0.9" }
   }
 }
-
-
-############################################
-# REMOVED: Import Block
-# The 'import' block for Jenkins-User has been removed.
-# Terraform will now create and manage the access entry for the Node Role.
-############################################
-
 
 ############################################
 # Providers
@@ -41,31 +33,23 @@ provider "kubernetes" {
 }
 
 provider "kubernetes" {
-  alias       = "mgmt"
-}
-
-# ADD THIS SLEEP RESOURCE to wait for EKS to propagate permissions
-resource "time_sleep" "wait_for_eks_auth" {
-  create_duration = "30s"
-
-  depends_on = [
-    aws_eks_access_policy_association.runner_admin
-  ]
+  alias = "mgmt"
 }
 
 ############################################
 # Bootstrap authorization in EKS via Access Entries (AWS-side)
 ############################################
-# MODIFIED: These resources now grant access to the Node Role ARN.
+# Grants access to the principal defined in var.runner_principal_arn.
+# For this to work, ensure this variable is set to your Node Role ARN.
 resource "aws_eks_access_entry" "runner" {
   cluster_name  = var.eks_cluster_name
-  principal_arn = var.runner_principal_arn # Now using the Node Role ARN
+  principal_arn = var.runner_principal_arn
   type          = "STANDARD"
 }
 
 resource "aws_eks_access_policy_association" "runner_admin" {
   cluster_name  = var.eks_cluster_name
-  principal_arn = var.runner_principal_arn # Now using the Node Role ARN
+  principal_arn = var.runner_principal_arn
   policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
   access_scope {
     type = "cluster"
@@ -73,7 +57,19 @@ resource "aws_eks_access_policy_association" "runner_admin" {
 }
 
 ############################################
-# Remote cluster: ServiceAccount + RBAC (No changes below this line)
+# Delay for EKS Permission Propagation
+############################################
+# This sleep prevents a race condition where Terraform tries to create
+# Kubernetes resources before EKS has finished applying the AWS-side permissions.
+resource "time_sleep" "wait_for_eks_auth" {
+  create_duration = "30s"
+  depends_on = [
+    aws_eks_access_policy_association.runner_admin
+  ]
+}
+
+############################################
+# Remote cluster: ServiceAccount + RBAC
 ############################################
 resource "kubernetes_service_account" "flux_remote_helm" {
   provider = kubernetes.remote
@@ -82,8 +78,6 @@ resource "kubernetes_service_account" "flux_remote_helm" {
     namespace = var.remote_target_namespace
   }
   depends_on = [
-    aws_eks_access_entry.runner,
-    aws_eks_access_policy_association.runner_admin,
     time_sleep.wait_for_eks_auth
   ]
 }
@@ -96,20 +90,11 @@ resource "kubernetes_cluster_role" "flux_remote_helm_role" {
     resources  = ["*"]
     verbs      = ["*"]
   }
-
-  rule {
-    api_groups = [""]
-    resources  = ["secrets"]
-    verbs      = ["get", "list", "watch", "create", "patch", "update", "delete"]
-  }
-
   rule {
     non_resource_urls = ["*"]
     verbs             = ["*"]
   }
   depends_on = [
-    aws_eks_access_entry.runner,
-    aws_eks_access_policy_association.runner_admin,
     time_sleep.wait_for_eks_auth
   ]
 }
@@ -133,7 +118,7 @@ resource "kubernetes_cluster_role_binding" "flux_remote_helm_binding" {
 }
 
 ############################################
-# Remote cluster: SA token Secret
+# Remote cluster: ServiceAccount Token Secret
 ############################################
 resource "kubernetes_secret" "flux_remote_sa_token" {
   provider = kubernetes.remote
@@ -144,7 +129,7 @@ resource "kubernetes_secret" "flux_remote_sa_token" {
       "kubernetes.io/service-account.name" = kubernetes_service_account.flux_remote_helm.metadata[0].name
     }
   }
-  type = "kubernetes.io/service-account-token"
+  type                           = "kubernetes.io/service-account-token"
   wait_for_service_account_token = true
   depends_on = [
     kubernetes_cluster_role_binding.flux_remote_helm_binding
@@ -152,48 +137,11 @@ resource "kubernetes_secret" "flux_remote_sa_token" {
 }
 
 ############################################
-# Build self-contained token kubeconfig
+# Management cluster: Publish Kubeconfig Secret for Flux
 ############################################
-############################################
-# Build self-contained token kubeconfig (NO exec)
-############################################
-locals {
-  # The .data["token"] is available only after apply. During plan, it's unknown,
-  # causing base64decode to fail. We use try() to catch the plan-time error
-  # and provide a placeholder, allowing the plan to succeed.
-  # The actual token will be correctly decoded and used during the apply phase.
-  remote_sa_token = try(base64decode(kubernetes_secret.flux_remote_sa_token.data["token"]), "token-is-known-after-apply")
-
-  kubeconfig = <<-YAML
-    apiVersion: v1
-    kind: Config
-    clusters:
-      - name: remote
-        cluster:
-          server: ${data.aws_eks_cluster.target.endpoint}
-          certificate-authority-data: ${data.aws_eks_cluster.target.certificate_authority[0].data}
-    users:
-      - name: flux-remote-helm
-        user:
-          token: ${local.remote_sa_token}
-    contexts:
-      - name: remote
-        context:
-          cluster: remote
-          user: flux-remote-helm
-    current-context: remote
-  YAML
-}
-
-# Optional: write kubeconfig locally (for debugging)
-resource "local_file" "remote_token_kubeconfig" {
-  content  = local.kubeconfig
-  filename = "./remote-token-kubeconfig.yaml"
-}
-
-############################################
-# Management cluster: publish kubeconfig Secret for Flux HelmRelease
-############################################
+# The locals block was removed to solve the plan/apply race condition.
+# The Kubeconfig is now constructed directly in the 'data' block, which defers
+# evaluation until the 'flux_remote_sa_token' is fully created and populated.
 resource "kubernetes_secret" "published_kubeconfig" {
   provider = kubernetes.mgmt
   metadata {
@@ -201,8 +149,44 @@ resource "kubernetes_secret" "published_kubeconfig" {
     namespace = var.publish_secret_namespace
     labels = { "managed-by" = "terraform", "purpose" = "flux-helmrelease-kubeconfig" }
   }
-  data = { value = local.kubeconfig }
   type = "Opaque"
+
+  # This explicit dependency is still good practice.
+  depends_on = [
+    kubernetes_secret.flux_remote_sa_token
+  ]
+
+  data = {
+    value = <<-YAML
+      apiVersion: v1
+      kind: Config
+      clusters:
+        - name: remote
+          cluster:
+            server: ${data.aws_eks_cluster.target.endpoint}
+            certificate-authority-data: ${data.aws_eks_cluster.target.certificate_authority[0].data}
+      users:
+        - name: flux-remote-helm
+          user:
+            # Decoding happens here at the last possible moment, ensuring the token is available.
+            token: ${base64decode(kubernetes_secret.flux_remote_sa_token.data["token"])}
+      contexts:
+        - name: remote
+          context:
+            cluster: remote
+            user: flux-remote-helm
+      current-context: remote
+    YAML
+  }
+}
+
+############################################
+# Optional: write kubeconfig locally (for debugging)
+############################################
+resource "local_file" "remote_token_kubeconfig" {
+  # This now reads its content from the final, correct secret resource.
+  content  = kubernetes_secret.published_kubeconfig.data["value"]
+  filename = "./remote-token-kubeconfig.yaml"
 }
 
 ############################################
