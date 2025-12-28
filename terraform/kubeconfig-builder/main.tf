@@ -1,17 +1,20 @@
-# FILE: terraform/02-kubeconfig-builder/main.tf
+# FILE: terraform/03-kubeconfig-builder/main.tf
 
 terraform {
   required_version = ">= 1.5"
   required_providers {
-    kubernetes = { source = "hashicorp/kubernetes", version = "~> 2.29" }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.29"
+    }
   }
 }
 
 provider "kubernetes" {
-  # This provider only talks to the management cluster
+  # This provider only interacts with the management cluster
 }
 
-# --- STAGE 2: Read the intermediate secret from Stage 1 ---
+# --- STAGE 3: Read the intermediate secret from Stage 2 ---
 data "kubernetes_secret" "intermediate_data" {
   metadata {
     name      = "tf-remote-raw-token-secret"
@@ -20,13 +23,15 @@ data "kubernetes_secret" "intermediate_data" {
 }
 
 # --- Build and Publish Final Kubeconfig ---
-# This can now safely decode the values from the data source,
-# because the data source reads a resource that is guaranteed to exist.
+# This safely decodes the permanent token and constructs the final secret.
 resource "kubernetes_secret" "published_kubeconfig" {
   metadata {
     name      = var.publish_secret_name
     namespace = var.publish_secret_namespace
-    labels    = { "managed-by" = "terraform", "purpose" = "flux-helmrelease-kubeconfig" }
+    labels = {
+      "managed-by" = "terraform"
+      "purpose"    = "flux-helmrelease-kubeconfig"
+    }
   }
   type = "Opaque"
   data = {
@@ -41,6 +46,7 @@ resource "kubernetes_secret" "published_kubeconfig" {
       users:
         - name: flux-remote-helm
           user:
+            # We must now decode the base64-encoded token from the intermediate secret.
             token: ${base64decode(data.kubernetes_secret.intermediate_data.data["token_b64"])}
       contexts:
         - name: remote
