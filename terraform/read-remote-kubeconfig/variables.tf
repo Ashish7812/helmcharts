@@ -19,13 +19,6 @@ variable "exec_kubeconfig_relpath" {
   default     = "./eks-exec-kubeconfig.yaml"
 }
 
-# Optional AWS profile for the CLI
-variable "aws_profile" {
-  description = "AWS CLI profile (optional)"
-  type        = string
-  default     = null
-}
-
 # Namespace on remote cluster (Helm storage/installation namespace)
 variable "remote_target_namespace" {
   description = "Remote cluster namespace for Helm release/storage"

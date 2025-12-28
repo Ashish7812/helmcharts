@@ -46,14 +46,12 @@ resource "null_resource" "generate_kubeconfig" {
     region          = var.region
     eks_cluster     = var.eks_cluster_name
     kubeconfig_path = var.exec_kubeconfig_relpath
-    aws_profile     = coalesce(var.aws_profile, "")
   }
 
   provisioner "local-exec" {
     interpreter = ["/bin/sh", "-c"]
     command     = <<-CMD
       set -euo pipefail
-      ${var.aws_profile != null ? "export AWS_PROFILE='${var.aws_profile}';" : ""}
       aws eks update-kubeconfig \
         --region '${var.region}' \
         --name '${var.eks_cluster_name}' \
