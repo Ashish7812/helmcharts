@@ -23,7 +23,6 @@ data "kubernetes_secret" "intermediate_data" {
 }
 
 # --- Build and Publish Final Kubeconfig ---
-# This safely decodes the permanent token and constructs the final secret.
 resource "kubernetes_secret" "published_kubeconfig" {
   metadata {
     name      = var.publish_secret_name
@@ -46,8 +45,9 @@ resource "kubernetes_secret" "published_kubeconfig" {
       users:
         - name: flux-remote-helm
           user:
-            # We must now decode the base64-encoded token from the intermediate secret.
-            token: ${base64decode(data.kubernetes_secret.intermediate_data.data["token_b64"])}
+            # THE FIX: Wrap the sensitive data in nonsensitive() before decoding.
+            # This tells the planner it's okay to proceed.
+            token: ${base64decode(nonsensitive(data.kubernetes_secret.intermediate_data.data["token_b64"]))}
       contexts:
         - name: remote
           context:
