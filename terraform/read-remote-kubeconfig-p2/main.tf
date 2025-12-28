@@ -96,6 +96,13 @@ resource "kubernetes_cluster_role" "flux_remote_helm_role" {
     resources  = ["*"]
     verbs      = ["*"]
   }
+
+  rule {
+    api_groups = [""]
+    resources  = ["secrets"]
+    verbs      = ["get", "list", "watch", "create", "patch", "update", "delete"]
+  }
+
   rule {
     non_resource_urls = ["*"]
     verbs             = ["*"]
