@@ -1,3 +1,4 @@
+
 terraform {
   required_version = ">= 1.5"
   required_providers {
@@ -7,7 +8,6 @@ terraform {
   }
 }
 
-
 ############################################
 # Providers
 ############################################
@@ -15,16 +15,14 @@ provider "aws" {
   region = var.region
 }
 
-# Read cluster endpoint & CA, and get an IAM-auth token to access the new cluster
+# Read EKS endpoint & CA; obtain a short-lived IAM-auth token
 data "aws_eks_cluster" "target" {
   name = var.eks_cluster_name
 }
-
 data "aws_eks_cluster_auth" "target" {
   name = var.eks_cluster_name
 }
-
-# Remote (target) Kubernetes provider: configured directly from AWS datasources
+# Configure remote Kubernetes provider *directly* from AWS datasources
 provider "kubernetes" {
   alias = "remote"
   host  = data.aws_eks_cluster.target.endpoint
@@ -33,14 +31,38 @@ provider "kubernetes" {
   )
   token = data.aws_eks_cluster_auth.target.token
 }
-
-# Management cluster provider: where we publish the kubeconfig Secret for Flux
+# Management cluster provider: publish kubeconfig Secret for Flux
 provider "kubernetes" {
   alias       = "mgmt"
 }
 
 ############################################
-# Remote cluster: ServiceAccount + RBAC
+# Bootstrap authorization in EKS via Access Entries (AWS-side)
+############################################
+# Best-practice path for granting IAM principals access to EKS: Access Entries + Policies. [1](https://docs.aws.amazon.com/eks/latest/userguide/access-entries.html)
+resource "aws_eks_access_entry" "runner" {
+  cluster_name  = var.eks_cluster_name
+  principal_arn = var.runner_principal_arn
+  type          = "STANDARD"
+  # Optional: also place the principal into system:masters at bootstrap.
+  kubernetes_groups = ["system:masters"]
+}  # [6](https://registry.terraform.io/providers/-/aws/latest/docs/resources/eks_access_entry)
+
+# Associate an admin policy at cluster scope (you can choose narrower policies later)
+resource "aws_eks_access_policy_association" "runner_admin" {
+  cluster_name  = var.eks_cluster_name
+  principal_arn = var.runner_principal_arn
+
+  # Common admin policy example:
+  policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+}  # [7](https://registry.terraform.io/providers/-/aws/latest/docs/resources/eks_access_policy_association)[8](https://docs.aws.amazon.com/eks/latest/userguide/access-policies.html)
+
+############################################
+# Remote cluster: ServiceAccount + RBAC (after access is granted)
 ############################################
 resource "kubernetes_service_account" "flux_remote_helm" {
   provider = kubernetes.remote
@@ -48,9 +70,14 @@ resource "kubernetes_service_account" "flux_remote_helm" {
     name      = "flux-remote-helm"
     namespace = var.remote_target_namespace
   }
+
+  depends_on = [
+    aws_eks_access_entry.runner,
+    aws_eks_access_policy_association.runner_admin
+  ]
 }
 
-# Broad access to simplify bootstrap; tighten to least-privilege later.
+# Broad permissions to simplify bootstrap; tighten to least-privilege later.
 resource "kubernetes_cluster_role" "flux_remote_helm_role" {
   provider = kubernetes.remote
   metadata { name = "flux-remote-helm-role" }
@@ -64,6 +91,11 @@ resource "kubernetes_cluster_role" "flux_remote_helm_role" {
     non_resource_urls = ["*"]
     verbs             = ["*"]
   }
+
+  depends_on = [
+    aws_eks_access_entry.runner,
+    aws_eks_access_policy_association.runner_admin
+  ]
 }
 
 resource "kubernetes_cluster_role_binding" "flux_remote_helm_binding" {
@@ -80,15 +112,18 @@ resource "kubernetes_cluster_role_binding" "flux_remote_helm_binding" {
     name      = kubernetes_service_account.flux_remote_helm.metadata[0].name
     namespace = var.remote_target_namespace
   }
+
+  depends_on = [
+    kubernetes_cluster_role.flux_remote_helm_role
+  ]
 }
 
 ############################################
 # Remote cluster: SA token Secret (wait until populated)
-# K8s v1.24+: tokens are not auto-created; create & wait
+# K8s v1.24+: SA tokens aren't auto-created; create and wait. [4](https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/)
 ############################################
 resource "kubernetes_secret" "flux_remote_sa_token" {
   provider = kubernetes.remote
-
   metadata {
     name      = "flux-remote-helm-token"
     namespace = var.remote_target_namespace
@@ -96,9 +131,14 @@ resource "kubernetes_secret" "flux_remote_sa_token" {
       "kubernetes.io/service-account.name" = kubernetes_service_account.flux_remote_helm.metadata[0].name
     }
   }
-
   type = "kubernetes.io/service-account-token"
-  wait_for_service_account_token = true
+
+  # Provider waits until .data.token is available
+  wait_for_service_account_token = true  # [3](https://registry.terraform.io/providers/hashicorp/kubernetes/latest/docs/resources/secret)
+
+  depends_on = [
+    kubernetes_cluster_role_binding.flux_remote_helm_binding
+  ]
 }
 
 ############################################
@@ -128,7 +168,7 @@ locals {
   YAML
 }
 
-# Optional: write kubeconfig to a local file for debugging
+# Optional: write kubeconfig locally (for debugging)
 resource "local_file" "remote_token_kubeconfig" {
   content  = local.kubeconfig
   filename = "./remote-token-kubeconfig.yaml"
@@ -136,7 +176,7 @@ resource "local_file" "remote_token_kubeconfig" {
 
 ############################################
 # Management cluster: publish kubeconfig Secret for Flux HelmRelease
-# Flux expects key "value" by default.
+# Flux expects the Secret data key default 'value'; same namespace as HelmRelease.
 ############################################
 resource "kubernetes_secret" "published_kubeconfig" {
   provider = kubernetes.mgmt
@@ -147,7 +187,7 @@ resource "kubernetes_secret" "published_kubeconfig" {
     labels = { "managed-by" = "terraform", "purpose" = "flux-helmrelease-kubeconfig" }
   }
 
-  data = { value = local.kubeconfig }
+  data = { value = local.kubeconfig }  # default key 'value' is recognized by Flux Helm Controller [5](https://docs.rs/flux-crds/latest/flux_crds/helm_toolkit_fluxcd_io/v2beta1/helm_release/struct.KubeConfig.html)
   type = "Opaque"
 }
 
@@ -156,7 +196,7 @@ resource "kubernetes_secret" "published_kubeconfig" {
 ############################################
 output "published_secret" {
   value       = "${var.publish_secret_namespace}/${var.publish_secret_name}"
-  description = "Kubeconfig Secret for Flux HelmRelease (key: value)"
+  description = "Kubeconfig Secret for Flux HelmRelease (data key: value)"
 }
 
 output "remote_sa_token_preview" {
@@ -167,5 +207,5 @@ output "remote_sa_token_preview" {
 
 output "remote_kubeconfig_file" {
   value       = local_file.remote_token_kubeconfig.filename
-  description = "Local copy of the token-based kubeconfig (debug)"
+  description = "Local copy of token-based kubeconfig (debug)"
 }
