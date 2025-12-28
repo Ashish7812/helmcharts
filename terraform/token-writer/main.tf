@@ -84,7 +84,7 @@ resource "kubernetes_secret" "flux_remote_sa_token" {
     name      = "flux-remote-helm-token"
     namespace = var.remote_target_namespace
     annotations = {
-      "kubernetes.io.service-account.name" = kubernetes_service_account.flux_remote_helm.metadata[0].name
+      "kubernetes.io.service-account.name" = "flux-remote-helm"
     }
   }
   type                           = "kubernetes.io/service-account-token"
