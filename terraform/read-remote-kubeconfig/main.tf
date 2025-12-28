@@ -5,6 +5,8 @@ terraform {
     kubernetes = { source = "hashicorp/kubernetes", version = "~> 2.29" }
     local      = { source = "hashicorp/local", version = "~> 2.4" }
     time       = { source = "hashicorp/time", version = "~> 0.9" }
+    # ADD THE SHELL PROVIDER
+    shell = { source = "gavinbunney/shell", version = "~> 1.7" }
   }
 }
 
@@ -124,32 +126,14 @@ resource "kubernetes_secret" "flux_remote_sa_token" {
 }
 
 ############################################
-# FINAL Kubeconfig Generation Logic
+# THE FIX: Decode the Token Using an External Command
 ############################################
-locals {
-  # This is the key fix. The token is null during the plan. We use coalesce()
-  # to provide a valid (but dummy) base64 string "Cg==" (a newline char) when
-  # the real token is null. This allows base64decode() to succeed during the
-  # plan. During the apply, the actual token will exist and be used.
-  kubeconfig = <<-YAML
-    apiVersion: v1
-    kind: Config
-    clusters:
-      - name: remote
-        cluster:
-          server: ${data.aws_eks_cluster.target.endpoint}
-          certificate-authority-data: ${data.aws_eks_cluster.target.certificate_authority[0].data}
-    users:
-      - name: flux-remote-helm
-        user:
-          token: ${base64decode(coalesce(kubernetes_secret.flux_remote_sa_token.data["token"], "Cg=="))}
-    contexts:
-      - name: remote
-        context:
-          cluster: remote
-          user: flux-remote-helm
-    current-context: remote
-  YAML
+# This data source runs `base64 -d` during the apply phase.
+# This bypasses the planner's validation, as it does not try to run
+# the command during the plan, only ensuring the dependencies are known.
+data "shell_script" "decode_sa_token" {
+  command = "base64 -d"
+  stdin   = kubernetes_secret.flux_remote_sa_token.data["token"]
 }
 
 ############################################
@@ -164,7 +148,26 @@ resource "kubernetes_secret" "published_kubeconfig" {
   }
   type = "Opaque"
   data = {
-    value = local.kubeconfig
+    value = <<-YAML
+      apiVersion: v1
+      kind: Config
+      clusters:
+        - name: remote
+          cluster:
+            server: ${data.aws_eks_cluster.target.endpoint}
+            certificate-authority-data: ${data.aws_eks_cluster.target.certificate_authority[0].data}
+      users:
+        - name: flux-remote-helm
+          user:
+            # Use the already-decoded output from the shell data source.
+            token: ${data.shell_script.decode_sa_token.output}
+      contexts:
+        - name: remote
+          context:
+            cluster: remote
+            user: flux-remote-helm
+      current-context: remote
+    YAML
   }
 }
 
@@ -172,7 +175,7 @@ resource "kubernetes_secret" "published_kubeconfig" {
 # Optional: write kubeconfig locally (for debugging)
 ############################################
 resource "local_file" "remote_token_kubeconfig" {
-  content  = local.kubeconfig
+  content  = kubernetes_secret.published_kubeconfig.data["value"]
   filename = "./remote-token-kubeconfig.yaml"
 }
 
