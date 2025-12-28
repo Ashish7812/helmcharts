@@ -5,8 +5,8 @@ terraform {
     kubernetes = { source = "hashicorp/kubernetes", version = "~> 2.29" }
     local      = { source = "hashicorp/local", version = "~> 2.4" }
     time       = { source = "hashicorp/time", version = "~> 0.9" }
-    # ADD THE SHELL PROVIDER
-    shell = { source = "gavinbunney/shell", version = "~> 1.7" }
+    # THE FIX: Switched to a more common and available shell provider
+    shell = { source = "kreuzwerker/shell", version = "~> 1.7" }
   }
 }
 
@@ -126,11 +126,8 @@ resource "kubernetes_secret" "flux_remote_sa_token" {
 }
 
 ############################################
-# THE FIX: Decode the Token Using an External Command
+# Decode the Token Using an External Command
 ############################################
-# This data source runs `base64 -d` during the apply phase.
-# This bypasses the planner's validation, as it does not try to run
-# the command during the plan, only ensuring the dependencies are known.
 data "shell_script" "decode_sa_token" {
   command = "base64 -d"
   stdin   = kubernetes_secret.flux_remote_sa_token.data["token"]
