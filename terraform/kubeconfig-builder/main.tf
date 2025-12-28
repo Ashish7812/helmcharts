@@ -23,6 +23,7 @@ data "kubernetes_secret" "intermediate_data" {
 }
 
 # --- Build and Publish Final Kubeconfig ---
+# This resource now correctly decodes all values from the intermediate secret.
 resource "kubernetes_secret" "published_kubeconfig" {
   metadata {
     name      = var.publish_secret_name
@@ -40,13 +41,14 @@ resource "kubernetes_secret" "published_kubeconfig" {
       clusters:
         - name: remote
           cluster:
-            server: ${data.kubernetes_secret.intermediate_data.data["cluster_endpoint"]}
-            certificate-authority-data: ${data.kubernetes_secret.intermediate_data.data["cluster_ca_certificate"]}
+            # DECODE NEEDED: The endpoint was base64 encoded when stored in the secret.
+            server: ${base64decode(data.kubernetes_secret.intermediate_data.data["cluster_endpoint"])}
+            # DECODE NEEDED: The CA data was also base64 encoded.
+            certificate-authority-data: ${base64decode(data.kubernetes_secret.intermediate_data.data["cluster_ca_certificate"])}
       users:
         - name: flux-remote-helm
           user:
-            # THE FIX: Wrap the sensitive data in nonsensitive() before decoding.
-            # This tells the planner it's okay to proceed.
+            # DECODE NEEDED: This line was the original source of the error, now fixed with nonsensitive().
             token: ${base64decode(nonsensitive(data.kubernetes_secret.intermediate_data.data["token_b64"]))}
       contexts:
         - name: remote
