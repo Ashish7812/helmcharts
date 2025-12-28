@@ -8,6 +8,17 @@ terraform {
   }
 }
 
+
+############################################
+# Adopt pre-existing EKS Access Entry
+############################################
+# This tells Terraform to manage the already-existing access entry
+# for the Jenkins-User on cluster "k8-simulation-client"
+import {
+  to = aws_eks_access_entry.runner
+  id = "k8-simulation-client:arn:aws:iam::810918108393:user/Jenkins-User"
+}
+
 ############################################
 # Providers
 ############################################
