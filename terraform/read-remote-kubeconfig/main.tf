@@ -207,7 +207,7 @@ output "published_secret" {
 }
 
 output "remote_sa_token_preview" {
-  value       = substr(base64decode(local.remote_sa_token), 0, 24)
+  value       = substr(try(base64decode(local.remote_sa_token), 0, 24), "will be known after apply")
   description = "First 24 chars of the SA token"
   sensitive   = true
 }
