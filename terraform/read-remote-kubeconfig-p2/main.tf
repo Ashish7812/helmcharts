@@ -39,7 +39,6 @@ provider "kubernetes" {
 ############################################
 # Bootstrap authorization in EKS via Access Entries (AWS-side)
 ############################################
-# Ensure var.runner_principal_arn is set to your Node Role ARN
 resource "aws_eks_access_entry" "runner" {
   cluster_name  = var.eks_cluster_name
   principal_arn = var.runner_principal_arn
@@ -109,9 +108,6 @@ resource "kubernetes_cluster_role_binding" "flux_remote_helm_binding" {
     name      = kubernetes_service_account.flux_remote_helm.metadata[0].name
     namespace = var.remote_target_namespace
   }
-  depends_on = [
-    kubernetes_cluster_role.flux_remote_helm_role
-  ]
 }
 
 ############################################
@@ -134,12 +130,30 @@ resource "kubernetes_secret" "flux_remote_sa_token" {
 }
 
 ############################################
-# Management cluster: Publish Kubeconfig Secret for Flux
+# STAGE 1: Intermediate Secret for Raw Token
 ############################################
-#
-# FINAL SOLUTION: This block constructs the final Kubeconfig.
-# The `locals` block is completely removed.
-#
+# This secret stores the *raw, base64-encoded* token.
+# We do not decode it here, which allows the plan to succeed.
+resource "kubernetes_secret" "intermediate_raw_token" {
+  provider = kubernetes.mgmt
+  metadata {
+    name      = "${var.publish_secret_name}-raw-token" # Give it a temporary name
+    namespace = var.publish_secret_namespace
+    labels    = { "managed-by" = "terraform", "purpose" = "intermediate-token" }
+  }
+  type = "Opaque"
+  data = {
+    # Just pass the raw base64 string. No functions are called.
+    "token_b64" = kubernetes_secret.flux_remote_sa_token.data["token"]
+  }
+}
+
+############################################
+# STAGE 2: Final Kubeconfig Secret
+############################################
+# This final secret depends on the intermediate secret.
+# Now it can safely decode the value, as the dependency will be fully
+# created during the apply phase before this resource is processed.
 resource "kubernetes_secret" "published_kubeconfig" {
   provider = kubernetes.mgmt
   metadata {
@@ -149,16 +163,26 @@ resource "kubernetes_secret" "published_kubeconfig" {
   }
   type = "Opaque"
 
-  # We use jsonencode to build a map that can handle the sensitive and
-  # computed token value during the plan phase, and then merge it with
-  # a map containing the final YAML string. This defers the final
-  # rendering until the apply phase when all values are known.
   data = {
-    "value" = templatefile("${path.module}/kubeconfig.tpl", {
-      cluster_endpoint = data.aws_eks_cluster.target.endpoint
-      cluster_ca_data  = data.aws_eks_cluster.target.certificate_authority[0].data
-      sa_token         = base64decode(kubernetes_secret.flux_remote_sa_token.data["token"])
-    })
+    value = <<-YAML
+      apiVersion: v1
+      kind: Config
+      clusters:
+        - name: remote
+          cluster:
+            server: ${data.aws_eks_cluster.target.endpoint}
+            certificate-authority-data: ${data.aws_eks_cluster.target.certificate_authority[0].data}
+      users:
+        - name: flux-remote-helm
+          user:
+            token: ${base64decode(kubernetes_secret.intermediate_raw_token.data["token_b64"])}
+      contexts:
+        - name: remote
+          context:
+            cluster: remote
+            user: flux-remote-helm
+      current-context: remote
+    YAML
   }
 }
 
