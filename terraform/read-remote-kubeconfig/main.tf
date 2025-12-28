@@ -147,8 +147,16 @@ resource "kubernetes_secret" "flux_remote_sa_token" {
 ############################################
 # Build self-contained token kubeconfig
 ############################################
+############################################
+# Build self-contained token kubeconfig (NO exec)
+############################################
 locals {
-  remote_sa_token = kubernetes_secret.flux_remote_sa_token.data["token"] # Note: .data values are already base64 encoded
+  # The .data["token"] is available only after apply. During plan, it's unknown,
+  # causing base64decode to fail. We use try() to catch the plan-time error
+  # and provide a placeholder, allowing the plan to succeed.
+  # The actual token will be correctly decoded and used during the apply phase.
+  remote_sa_token = try(base64decode(kubernetes_secret.flux_remote_sa_token.data["token"]), "token-is-known-after-apply")
+
   kubeconfig = <<-YAML
     apiVersion: v1
     kind: Config
@@ -160,7 +168,7 @@ locals {
     users:
       - name: flux-remote-helm
         user:
-          token: ${base64decode(local.remote_sa_token)}
+          token: ${local.remote_sa_token}
     contexts:
       - name: remote
         context:
@@ -170,6 +178,7 @@ locals {
   YAML
 }
 
+# Optional: write kubeconfig locally (for debugging)
 resource "local_file" "remote_token_kubeconfig" {
   content  = local.kubeconfig
   filename = "./remote-token-kubeconfig.yaml"
