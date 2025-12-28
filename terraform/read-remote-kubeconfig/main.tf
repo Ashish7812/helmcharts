@@ -40,26 +40,26 @@ provider "kubernetes" {
 # Bootstrap authorization in EKS via Access Entries (AWS-side)
 ############################################
 # Best-practice path for granting IAM principals access to EKS: Access Entries + Policies. [1](https://docs.aws.amazon.com/eks/latest/userguide/access-entries.html)
+
 resource "aws_eks_access_entry" "runner" {
   cluster_name  = var.eks_cluster_name
   principal_arn = var.runner_principal_arn
   type          = "STANDARD"
-  # Optional: also place the principal into system:masters at bootstrap.
-  kubernetes_groups = ["system:masters"]
-}  # [6](https://registry.terraform.io/providers/-/aws/latest/docs/resources/eks_access_entry)
 
-# Associate an admin policy at cluster scope (you can choose narrower policies later)
+  # Do not set any "system:*" groups here.
+  # kubernetes_groups = ["system:masters"]  # <-- DELETE this line
+}
+
 resource "aws_eks_access_policy_association" "runner_admin" {
   cluster_name  = var.eks_cluster_name
   principal_arn = var.runner_principal_arn
-
-  # Common admin policy example:
-  policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
 
   access_scope {
     type = "cluster"
   }
-}  # [7](https://registry.terraform.io/providers/-/aws/latest/docs/resources/eks_access_policy_association)[8](https://docs.aws.amazon.com/eks/latest/userguide/access-policies.html)
+}
+  # [7](https://registry.terraform.io/providers/-/aws/latest/docs/resources/eks_access_policy_association)[8](https://docs.aws.amazon.com/eks/latest/userguide/access-policies.html)
 
 ############################################
 # Remote cluster: ServiceAccount + RBAC (after access is granted)
