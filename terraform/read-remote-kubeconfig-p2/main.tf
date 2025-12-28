@@ -39,8 +39,7 @@ provider "kubernetes" {
 ############################################
 # Bootstrap authorization in EKS via Access Entries (AWS-side)
 ############################################
-# Grants access to the principal defined in var.runner_principal_arn.
-# For this to work, ensure this variable is set to your Node Role ARN.
+# Ensure var.runner_principal_arn is set to your Node Role ARN
 resource "aws_eks_access_entry" "runner" {
   cluster_name  = var.eks_cluster_name
   principal_arn = var.runner_principal_arn
@@ -59,8 +58,6 @@ resource "aws_eks_access_policy_association" "runner_admin" {
 ############################################
 # Delay for EKS Permission Propagation
 ############################################
-# This sleep prevents a race condition where Terraform tries to create
-# Kubernetes resources before EKS has finished applying the AWS-side permissions.
 resource "time_sleep" "wait_for_eks_auth" {
   create_duration = "30s"
   depends_on = [
@@ -139,44 +136,29 @@ resource "kubernetes_secret" "flux_remote_sa_token" {
 ############################################
 # Management cluster: Publish Kubeconfig Secret for Flux
 ############################################
-# The locals block was removed to solve the plan/apply race condition.
-# The Kubeconfig is now constructed directly in the 'data' block, which defers
-# evaluation until the 'flux_remote_sa_token' is fully created and populated.
+#
+# FINAL SOLUTION: This block constructs the final Kubeconfig.
+# The `locals` block is completely removed.
+#
 resource "kubernetes_secret" "published_kubeconfig" {
   provider = kubernetes.mgmt
   metadata {
     name      = var.publish_secret_name
     namespace = var.publish_secret_namespace
-    labels = { "managed-by" = "terraform", "purpose" = "flux-helmrelease-kubeconfig" }
+    labels    = { "managed-by" = "terraform", "purpose" = "flux-helmrelease-kubeconfig" }
   }
   type = "Opaque"
 
-  # This explicit dependency is still good practice.
-  depends_on = [
-    kubernetes_secret.flux_remote_sa_token
-  ]
-
+  # We use jsonencode to build a map that can handle the sensitive and
+  # computed token value during the plan phase, and then merge it with
+  # a map containing the final YAML string. This defers the final
+  # rendering until the apply phase when all values are known.
   data = {
-    value = <<-YAML
-      apiVersion: v1
-      kind: Config
-      clusters:
-        - name: remote
-          cluster:
-            server: ${data.aws_eks_cluster.target.endpoint}
-            certificate-authority-data: ${data.aws_eks_cluster.target.certificate_authority[0].data}
-      users:
-        - name: flux-remote-helm
-          user:
-            # Decoding happens here at the last possible moment, ensuring the token is available.
-            token: ${base64decode(kubernetes_secret.flux_remote_sa_token.data["token"])}
-      contexts:
-        - name: remote
-          context:
-            cluster: remote
-            user: flux-remote-helm
-      current-context: remote
-    YAML
+    "value" = templatefile("${path.module}/kubeconfig.tpl", {
+      cluster_endpoint = data.aws_eks_cluster.target.endpoint
+      cluster_ca_data  = data.aws_eks_cluster.target.certificate_authority[0].data
+      sa_token         = base64decode(kubernetes_secret.flux_remote_sa_token.data["token"])
+    })
   }
 }
 
@@ -184,7 +166,6 @@ resource "kubernetes_secret" "published_kubeconfig" {
 # Optional: write kubeconfig locally (for debugging)
 ############################################
 resource "local_file" "remote_token_kubeconfig" {
-  # This now reads its content from the final, correct secret resource.
   content  = kubernetes_secret.published_kubeconfig.data["value"]
   filename = "./remote-token-kubeconfig.yaml"
 }
