@@ -83,7 +83,7 @@ resource "kubernetes_service_account" "flux_remote_helm" {
   }
   depends_on = [
     aws_eks_access_entry.runner,
-    aws_eks_access_policy_association.runner_admin
+    aws_eks_access_policy_association.runner_admin,
     time_sleep.wait_for_eks_auth
   ]
 }
@@ -102,7 +102,7 @@ resource "kubernetes_cluster_role" "flux_remote_helm_role" {
   }
   depends_on = [
     aws_eks_access_entry.runner,
-    aws_eks_access_policy_association.runner_admin
+    aws_eks_access_policy_association.runner_admin,
     time_sleep.wait_for_eks_auth
   ]
 }
