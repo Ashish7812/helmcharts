@@ -63,6 +63,14 @@ resource "aws_eks_cluster" "main" {
     endpoint_public_access  = true
   }
 
+  # --- ADD THIS BLOCK ---
+  # This configures the cluster to accept both the modern Access Entry API calls
+  # and the legacy aws-auth ConfigMap for authentication.
+  access_config {
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
+
   depends_on = [
     aws_iam_role_policy_attachment.eks_cluster_policy,
   ]
