@@ -15,7 +15,7 @@ provider "kubernetes" {
 }
 
 # --- STAGE 3: Read the intermediate secret from Stage 2 ---
-# The .data map from this data source contains plain-text, already-decoded values.
+# The .data map from this data source provides plain-text, decoded values.
 data "kubernetes_secret" "intermediate_data" {
   metadata {
     name      = "tf-remote-raw-token-secret"
@@ -24,8 +24,7 @@ data "kubernetes_secret" "intermediate_data" {
 }
 
 # --- Build and Publish Final Kubeconfig ---
-# This version uses the plain-text values from the data source directly.
-# No base64decode calls are needed.
+# This version now correctly decodes, encodes, and uses values as required.
 resource "kubernetes_secret" "published_kubeconfig" {
   metadata {
     name      = var.publish_secret_name
@@ -43,14 +42,14 @@ resource "kubernetes_secret" "published_kubeconfig" {
       clusters:
         - name: remote
           cluster:
-            # This is the plain URL, used directly.
-            server: ${data.kubernetes_secret.intermediate_data.data["cluster_endpoint"]}
-            # This is the base64-encoded CA certificate, used directly.
-            certificate-authority-data: ${data.kubernetes_secret.intermediate_data.data["cluster_ca_certificate"]}
+            # Correct: The endpoint URL needs to be decoded from the secret's data.
+            server: ${base64decode(data.kubernetes_secret.intermediate_data.data["cluster_endpoint"])}
+            # Correct: The CA cert data must be re-encoded to be valid in the Kubeconfig.
+            certificate-authority-data: ${base64encode(data.kubernetes_secret.intermediate_data.data["cluster_ca_certificate"])}
       users:
         - name: flux-remote-helm
           user:
-            # This is the plain JWT token, used directly.
+            # Correct: The token is already decoded by the data source, so use it directly.
             token: ${data.kubernetes_secret.intermediate_data.data["token_b64"]}
       contexts:
         - name: remote
