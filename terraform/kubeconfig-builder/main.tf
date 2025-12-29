@@ -15,6 +15,8 @@ provider "kubernetes" {
 }
 
 # --- STAGE 3: Read the intermediate secret from Stage 2 ---
+# The .data map from this data source provides plain-text values for the token
+# and endpoint, and a correctly single-encoded base64 string for the CA cert.
 data "kubernetes_secret" "intermediate_data" {
   metadata {
     name      = "tf-remote-raw-token-secret"
@@ -22,22 +24,9 @@ data "kubernetes_secret" "intermediate_data" {
   }
 }
 
-# --- Prepare all values in a locals block to satisfy the planner ---
-locals {
-  # The data source gives us the plain-text URL directly.
-  cluster_endpoint = data.kubernetes_secret.intermediate_data.data["cluster_endpoint"]
-
-  # The data source gives us the plain-text JWT token directly.
-  sa_token = data.kubernetes_secret.intermediate_data.data["token_b64"]
-
-  # The data source gives us the DECODED CA certificate. The Kubeconfig needs it
-  # to be RE-ENCODED. We use nonsensitive() to allow this during the plan.
-  cluster_ca_certificate_b64 = base64encode(nonsensitive(data.kubernetes_secret.intermediate_data.data["cluster_ca_certificate"]))
-}
-
-
 # --- Build and Publish Final Kubeconfig ---
-# This resource now contains NO function calls, only direct variable substitutions.
+# This version is the simplest and correct one. It uses the values from the
+# data source directly, as they are already in the correct format.
 resource "kubernetes_secret" "published_kubeconfig" {
   metadata {
     name      = var.publish_secret_name
@@ -55,12 +44,15 @@ resource "kubernetes_secret" "published_kubeconfig" {
       clusters:
         - name: remote
           cluster:
-            server: ${local.cluster_endpoint}
-            certificate-authority-data: ${local.cluster_ca_certificate_b64}
+            # Correct: Use the plain-text URL directly.
+            server: ${data.kubernetes_secret.intermediate_data.data["cluster_endpoint"]}
+            # Correct: Use the single-encoded CA data directly.
+            certificate-authority-data: ${data.kubernetes_secret.intermediate_data.data["cluster_ca_certificate"]}
       users:
         - name: flux-remote-helm
           user:
-            token: ${local.sa_token}
+            # Correct: Use the plain-text token directly.
+            token: ${data.kubernetes_secret.intermediate_data.data["token_b64"]}
       contexts:
         - name: remote
           context:
