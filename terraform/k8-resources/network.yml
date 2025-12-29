@@ -12,7 +12,7 @@ spec:
   approvePlan: auto
 
   # Path within the GitRepository that contains your Terraform code
-  path: terraform/s3-resources
+  path: terraform/infrastructure/network
 
   # Reference to the Flux Source
   sourceRef:
@@ -21,23 +21,18 @@ spec:
 
   # Runner configuration (multi-tenancy model)
   serviceAccountName: tf-runner-sa
-
+  destroyResourcesOnDeletion: true
   
   # 👇 New: write all outputs to a Secret
   writeOutputsToSecret:
-    name: s3-demo-outputs
+    name: network-resources-outputs
     # (optional) add labels/annotations if another controller consumes the secret
     labels:
       app.kubernetes.io/managed-by: tofu-controller
     annotations:
       example.com/expires-at: "never"
 
-
   # Terraform variables (match your variables.tf)
   vars:
-    - name: region
-      value: "us-east-1"
-    - name: bucket_name
-      value: "devdevil-demo-bucket"
-    - name: environment
-      value: "dev"
+    - name: cluster_name
+      value: "k8-tf-simulation"
