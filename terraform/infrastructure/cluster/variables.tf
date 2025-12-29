@@ -20,8 +20,9 @@ variable "vpc_id" {
 }
 
 variable "private_subnet_ids" {
-  description = "A list of private subnet IDs for the worker nodes. (Output from the VPC stage)"
-  type        = list(string)
+  description = "A JSON-encoded string containing the list of private subnet IDs."
+  # THE FIX: Change the type from list(string) to string.
+  type        = string
 }
 
 # --- EKS Node Group Configuration ---
