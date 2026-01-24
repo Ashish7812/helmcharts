@@ -1,0 +1,22 @@
+apiVersion: gitops.pega.com/v1alpha1
+kind: HelmOutputSync
+metadata:
+  # The name of this sync operation
+  name: my-nginx-release-outputs
+  # This should be in the same namespace as your controller and the secret
+  namespace: default
+spec:
+  # --- Part 1: How to connect to the target cluster ---
+  targetClusterSecret:
+    # This is the name of the secret we created with Terraform that holds
+    # the kubeconfig for the remote EKS cluster.
+    name: k8-simulation-client-cluster-kubeconfig
+
+  # --- Part 2: What to look for on the target cluster ---
+  # The controller will find all resources with the label: "release: my-nginx-release"
+  helmReleaseName: producer-release-remote
+
+  # --- Part 3: Where to store the results on the management cluster ---
+  targetConfigMap:
+    # The controller will create/update a ConfigMap with this name.
+    name: producer-release-remote-cm

@@ -1,0 +1,38 @@
+
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: {{ .Values.network_name }}
+  namespace: default
+spec:
+  # Reconcile cadence: plan/apply and drift detection cadence
+  interval: 5m
+
+  # Automate plan approval + apply (good for non-prod; for prod consider manual)
+  approvePlan: auto
+
+  # Path within the GitRepository that contains your Terraform code
+  path: terraform/infrastructure/network
+
+  # Reference to the Flux Source
+  sourceRef:
+    kind: GitRepository
+    name: ack-git
+
+  # Runner configuration (multi-tenancy model)
+  serviceAccountName: tf-runner-sa
+  destroyResourcesOnDeletion: true
+  
+  # 👇 New: write all outputs to a Secret
+  writeOutputsToSecret:
+    name: {{ .Values.network_name }}-outputs
+    # (optional) add labels/annotations if another controller consumes the secret
+    labels:
+      app.kubernetes.io/managed-by: tofu-controller
+    annotations:
+      example.com/expires-at: "never"
+
+  # Terraform variables (match your variables.tf)
+  vars:
+    - name: cluster_name
+      value: {{ .Values.cluster_name }}

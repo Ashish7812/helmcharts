@@ -1,0 +1,28 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: network-helmrelease
+  namespace: default
+spec:
+  values:
+    network_name: k8s-network
+    cluster_name: k8-tf-simulation
+  interval: 15m
+  timeout: 5m
+  chart:
+    spec:
+      chart: producer-remote
+      version: '6.5.*'
+      sourceRef:
+        kind: GitRepository
+        name: ack-git
+      interval: 5m
+  releaseName: network-release
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  test:
+    enable: true

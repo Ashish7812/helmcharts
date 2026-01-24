@@ -1,0 +1,53 @@
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: cluster-resources
+  namespace: default
+spec:
+  # This section ensures that this Terraform object will not run until
+  # the 'network-resources' Terraform object has successfully applied.
+  dependsOn:
+    - name: network-resources # IMPORTANT: This must match the name of your VPC/Network Terraform CR
+
+  # Reconcile cadence: plan/apply and drift detection cadence
+  interval: 5m
+
+  # Automate plan approval + apply (good for non-prod; for prod consider manual)
+  approvePlan: auto
+
+  # Path within the GitRepository that contains your Terraform code
+  path: terraform/infrastructure/cluster
+
+  # Reference to the Flux Source
+  sourceRef:
+    kind: GitRepository
+    name: ack-git
+
+  # Runner configuration (multi-tenancy model)
+  serviceAccountName: tf-runner-sa
+  destroyResourcesOnDeletion: true
+  
+  # New: write all outputs to a Secret
+  writeOutputsToSecret:
+    name: cluster-resources-outputs
+    # (optional) add labels/annotations if another controller consumes the secret
+    labels:
+      app.kubernetes.io/managed-by: tofu-controller
+    annotations:
+      example.com/expires-at: "never"
+
+  # Terraform variables (match your variables.tf)
+  vars:
+    - name: cluster_name
+      value: "k8-tf-simulation"
+    # 👇 Add any other static variables for your EKS cluster here, e.g.:
+    # - name: aws_region
+    #   value: "eu-south-1"
+
+  # This section dynamically pulls values from the output Secret of the
+  # network stage and maps them to the required input variables for this stage.
+  varsFrom:
+    - kind: Secret
+      # This must match the 'name' specified in the 'writeOutputsToSecret'
+      # block of your 'network-resources' Terraform CR.
+      name: network-resources-outputs

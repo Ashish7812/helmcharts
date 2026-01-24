@@ -1,0 +1,2 @@
+cluster_name: "k8-tf-simulation"
+network_name: "k8s-network"
