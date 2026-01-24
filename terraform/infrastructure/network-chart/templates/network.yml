@@ -53,7 +53,7 @@ spec:
   # --- THIS IS THE KEY CHANGE ---
   # Instead of creating a new ServiceAccount, we use the existing one
   # that the main Terraform resource already uses.
-  serviceAccountName: tf-runner-sa # IMPORTANT: Assumes tf-runner-sa is in the same namespace
+  serviceAccountName: tf-runner-tester # IMPORTANT: Assumes tf-runner-tester is in the same namespace
 
   # We don't want this test pod hanging around forever.
   restartPolicy: Never
