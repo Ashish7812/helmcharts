@@ -10,7 +10,7 @@ spec:
     network_name: k8s-network
     cluster_name: k8-tf-simulation
   interval: 15m
-  timeout: 5m
+  timeout: 25m
   chart:
     spec:
       chart: terraform/infrastructure/cluster-chart
