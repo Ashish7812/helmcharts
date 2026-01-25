@@ -4,6 +4,8 @@ metadata:
   name: cluster-helmrelease
   namespace: default
 spec:
+  dependsOn:
+    - name: network-helmrelease
   values:
     network_name: k8s-network
     cluster_name: k8-tf-simulation

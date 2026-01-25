@@ -75,10 +75,10 @@ spec:
           echo "--- Waiting for Terraform resource 'terraform/{{ .Values.cluster_name }}' to become Ready ---"
           
           # This is the core of the test.
-          # It waits up to 4 minutes (--timeout=4m) for the 'Ready' condition on the Terraform resource.
+          # It waits up to 24 minutes (--timeout=24m) for the 'Ready' condition on the Terraform resource.
           # If the condition is met, the command exits with code 0 (Success).
           # If it times out or fails, it exits with code 1 (Failure).
-          kubectl wait --for=condition=Ready terraform/{{ .Values.cluster_name }} --timeout=4m -n {{ .Release.Namespace }}
+          kubectl wait --for=condition=Ready terraform/{{ .Values.cluster_name }} --timeout=24m -n {{ .Release.Namespace }}
           
           if [ $? -eq 0 ]; then
             echo "--- Terraform resource is Ready! Test successful. ---"
