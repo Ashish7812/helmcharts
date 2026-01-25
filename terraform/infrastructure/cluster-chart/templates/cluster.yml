@@ -54,7 +54,7 @@ metadata:
     "helm.sh/hook": test
     # This tells Helm to delete this pod after a successful test run.
     # If the test fails, the pod is left for debugging.
-    "helm.sh/hook-delete-policy": hook-succeeded
+    "helm.sh/hook-delete-policy": hook-completed,before-hook-creation
 spec:
   # --- THIS IS THE KEY CHANGE ---
   # Instead of creating a new ServiceAccount, we use the existing one
