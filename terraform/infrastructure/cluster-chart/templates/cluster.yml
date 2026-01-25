@@ -44,6 +44,132 @@ spec:
       name: {{ .Values.network_name }}-outputs
 
 ---
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: {{ .Values.cluster_name }}-tf-aws-permissions
+  namespace: default
+spec:
+  destroyResourcesOnDeletion: true
+
+  dependsOn:
+    - name: {{ .Values.cluster_name }}
+
+  # Reconcile cadence: plan/apply and drift detection cadence
+  interval: 5m
+
+  # Automate plan approval + apply (good for non-prod; for prod consider manual)
+  approvePlan: auto
+
+  # Path within the GitRepository that contains your Terraform code
+  path: terraform/infrastructure/access-entry-creator
+  runnerPodTemplate:
+    spec:
+      image: 810918108393.dkr.ecr.eu-south-1.amazonaws.com/tf-runner-tools:v1
+
+  # Reference to the Flux Source
+  sourceRef:
+    kind: GitRepository
+    name: ack-git
+
+  # Runner configuration (multi-tenancy model)
+  serviceAccountName: tf-runner-sa
+  vars:
+    - name: region
+      value: "eu-south-1"
+    - name: eks_cluster_name
+      value: "{{ .Values.cluster_name }}"
+    - name: runner_principal_arn
+      value: "arn:aws:iam::810918108393:role/eksctl-k8-simulation-nodegroup-def-NodeInstanceRole-WrSOfoyc7m3b"
+
+---
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: {{ .Values.cluster_name }}-tf-token-writer
+  namespace: default # Or your Flux namespace
+spec:
+  destroyResourcesOnDeletion: true
+  # This is the most critical part. It tells Flux to wait until
+  # the first stage is successfully applied.
+  dependsOn:
+    - name: {{ .Values.cluster_name }}-tf-aws-permissions
+
+  # Reconcile cadence: plan/apply and drift detection cadence
+  interval: 5m
+
+  # Automate plan approval + apply (good for non-prod; for prod consider manual)
+  approvePlan: auto
+
+  # Path within the GitRepository that contains your Terraform code
+  path: terraform/infrastructure/token-writer
+  runnerPodTemplate:
+    spec:
+      image: 810918108393.dkr.ecr.eu-south-1.amazonaws.com/tf-runner-tools:v1
+
+  # Reference to the Flux Source
+  sourceRef:
+    kind: GitRepository
+    name: ack-git
+
+  # Runner configuration (multi-tenancy model)
+  serviceAccountName: tf-runner-sa
+
+  # Define all your variables for this stage here
+  vars:
+    - name: region
+      value: "eu-south-1"
+    - name: eks_cluster_name
+      value: "{{ .Values.cluster_name }}"
+    - name: runner_principal_arn
+      value: "arn:aws:iam::810918108393:role/eksctl-k8-simulation-nodegroup-def-NodeInstanceRole-WrSOfoyc7m3b"
+    - name: remote_target_namespace
+      value: "default"
+    - name: publish_secret_namespace
+      value: "default"
+
+---
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: {{ .Values.cluster_name }}-tf-kubeconfig-builder
+  namespace: default # Or your Flux namespace
+spec:
+  destroyResourcesOnDeletion: true
+  # This is the most critical part. It tells Flux to wait until
+  # the first stage is successfully applied.
+  dependsOn:
+    - name: {{ .Values.cluster_name }}-tf-token-writer
+  
+  # Reconcile cadence: plan/apply and drift detection cadence
+  interval: 5m
+
+  # Automate plan approval + apply (good for non-prod; for prod consider manual)
+  approvePlan: auto
+
+  # Path within the GitRepository that contains your Terraform code
+  path: terraform/infrastructure/kubeconfig-builder
+  runnerPodTemplate:
+    spec:
+      image: 810918108393.dkr.ecr.eu-south-1.amazonaws.com/tf-runner-tools:v1
+
+  # Reference to the Flux Source
+  sourceRef:
+    kind: GitRepository
+    name: ack-git
+
+  # Runner configuration (multi-tenancy model)
+  serviceAccountName: tf-runner-sa
+
+  # Define variables for this stage
+  vars:
+    - name: publish_secret_namespace
+      value: "default"
+    - name: publish_secret_name
+      value: "{{ .Values.cluster_name }}-remote-kubeconfig-secret" # The final secret for your HelmRelease
+
+
+---
 apiVersion: v1
 kind: Pod
 metadata:
@@ -72,20 +198,20 @@ spec:
         - "/bin/sh"
         - "-c"
         - |
-          echo "--- Waiting for Terraform resource 'terraform/{{ .Values.cluster_name }}' to become Ready ---"
+          echo "--- Waiting for Terraform resource 'terraform/{{ .Values.cluster_name }}-tf-kubeconfig-builder' to become Ready ---"
           
           # This is the core of the test.
-          # It waits up to 24 minutes (--timeout=24m) for the 'Ready' condition on the Terraform resource.
+          # It waits up to 45 minutes (--timeout=45m) for the 'Ready' condition on the Terraform resource.
           # If the condition is met, the command exits with code 0 (Success).
           # If it times out or fails, it exits with code 1 (Failure).
-          kubectl wait --for=condition=Ready terraform/{{ .Values.cluster_name }} --timeout=24m -n {{ .Release.Namespace }}
+          kubectl wait --for=condition=Ready terraform/{{ .Values.cluster_name }}-tf-kubeconfig-builder --timeout=45m -n {{ .Release.Namespace }}
           
           if [ $? -eq 0 ]; then
             echo "--- Terraform resource is Ready! Test successful. ---"
             exit 0
           else
             echo "--- Timed out waiting for Terraform resource. Test failed. ---"
-            echo "--- Current status of Terraform resource '{{ .Values.cluster_name }}': ---"
-            kubectl get terraform {{ .Values.cluster_name }} -n {{ .Release.Namespace }} -o yaml
+            echo "--- Current status of Terraform resource '{{ .Values.cluster_name }}-tf-kubeconfig-builder': ---"
+            kubectl get terraform {{ .Values.cluster_name }}-tf-kubeconfig-builder -n {{ .Release.Namespace }} -o yaml
             exit 1
           fi
