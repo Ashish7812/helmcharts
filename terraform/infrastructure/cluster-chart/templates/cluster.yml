@@ -1,0 +1,91 @@
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: {{ .Values.cluster_name }}
+  namespace: default
+spec:
+  dependsOn:
+    - name: {{ .Values.network_name }} # IMPORTANT: This must match the name of your VPC/Network Terraform CR
+
+  # Reconcile cadence: plan/apply and drift detection cadence
+  interval: 5m
+
+  # Automate plan approval + apply (good for non-prod; for prod consider manual)
+  approvePlan: auto
+
+  # Path within the GitRepository that contains your Terraform code
+  path: terraform/infrastructure/cluster
+
+  # Reference to the Flux Source
+  sourceRef:
+    kind: GitRepository
+    name: ack-git
+
+  # Runner configuration (multi-tenancy model)
+  serviceAccountName: tf-runner-sa
+  destroyResourcesOnDeletion: true
+  
+  # New: write all outputs to a Secret
+  writeOutputsToSecret:
+    name: {{ .Values.cluster_name }}-outputs
+    # (optional) add labels/annotations if another controller consumes the secret
+    labels:
+      app.kubernetes.io/managed-by: tofu-controller
+    annotations:
+      example.com/expires-at: "never"
+
+  # Terraform variables (match your variables.tf)
+  vars:
+    - name: cluster_name
+      value: {{ .Values.cluster_name }}
+
+  varsFrom:
+    - kind: Secret
+      name: {{ .Values.network_name }}-outputs
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ .Release.Name }}-readiness-test"
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    # This marks the resource as a Helm Test
+    "helm.sh/hook": test
+    # This tells Helm to delete this pod after a successful test run.
+    # If the test fails, the pod is left for debugging.
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  # --- THIS IS THE KEY CHANGE ---
+  # Instead of creating a new ServiceAccount, we use the existing one
+  # that the main Terraform resource already uses.
+  serviceAccountName: tf-runner-tester # IMPORTANT: Assumes tf-runner-tester is in the same namespace
+
+  # We don't want this test pod hanging around forever.
+  restartPolicy: Never
+  
+  containers:
+    - name: checker
+      # Using a small, official image that contains the kubectl binary
+      image: bitnami/kubectl:latest
+      command:
+        - "/bin/sh"
+        - "-c"
+        - |
+          echo "--- Waiting for Terraform resource 'terraform/{{ .Values.cluster_name }}' to become Ready ---"
+          
+          # This is the core of the test.
+          # It waits up to 4 minutes (--timeout=4m) for the 'Ready' condition on the Terraform resource.
+          # If the condition is met, the command exits with code 0 (Success).
+          # If it times out or fails, it exits with code 1 (Failure).
+          kubectl wait --for=condition=Ready terraform/{{ .Values.cluster_name }} --timeout=4m -n {{ .Release.Namespace }}
+          
+          if [ $? -eq 0 ]; then
+            echo "--- Terraform resource is Ready! Test successful. ---"
+            exit 0
+          else
+            echo "--- Timed out waiting for Terraform resource. Test failed. ---"
+            echo "--- Current status of Terraform resource '{{ .Values.cluster_name }}': ---"
+            kubectl get terraform {{ .Values.cluster_name }} -n {{ .Release.Namespace }} -o yaml
+            exit 1
+          fi
