@@ -64,7 +64,7 @@ metadata:
 spec:
   template:
     spec:
-      serviceAccountName: monitor-resource-sa
+      serviceAccountName: flux-remote-helm
       restartPolicy: Never
       containers:
         - name: monitor-resource
